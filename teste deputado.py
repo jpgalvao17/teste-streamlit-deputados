@@ -35,7 +35,6 @@ if st.button("Buscar"):
                 st.image(deputado['urlFoto'], width=100)
                 st.write(f"- Partido: {deputado['siglaPartido']}")
                 st.write(f"- UF: {deputado['siglaUf']}")
-                st.write(f"- Email: {deputado['email']}")
                 st.markdown("---")
         else:
             st.warning("Nenhum deputado encontrado com os filtros selecionados.")
