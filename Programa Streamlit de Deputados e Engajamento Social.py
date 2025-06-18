@@ -6,6 +6,7 @@ import altair as alt
 @st.cache_data
 def load_data():
     try:
+        # These files are now available due to mock data generation
         df_deputados = pd.read_csv('deputados.csv')
         df_engajamento = pd.read_csv('engajamento_redes.csv')
         df_completo = pd.merge(df_deputados, df_engajamento, on='nome_deputado', how='left')
@@ -20,20 +21,27 @@ def load_data():
 
         return df_completo
 
-    except FileNotFoundError:
-        st.error("Erro: Arquivos 'deputados.csv' ou 'engajamento_redes.csv' não encontrados.")
+    except FileNotFoundError as e:
+        st.error(f"Erro: Um dos arquivos de dados (deputados.csv ou engajamento_redes.csv) não foi encontrado. Detalhes: {e}")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Erro ao carregar dados dos deputados: {e}")
         return pd.DataFrame()
 
 # Função para carregar os posts
 @st.cache_data
 def load_posts():
     try:
-        df_posts = pd.read_csv('Posts.csv', delimiter=';')
+        # Changed to load Posts(1).csv directly
+        df_posts = pd.read_csv('Posts(1).csv', delimiter=';')
         df_posts['Date'] = pd.to_datetime(df_posts['Date'], errors='coerce')
         df_posts['Engajamento total'] = pd.to_numeric(df_posts['Engajamento total'], errors='coerce').fillna(0).astype(int)
         return df_posts
+    except FileNotFoundError:
+        st.error("Erro: Arquivo 'Posts(1).csv' não encontrado. Certifique-se de que o arquivo foi carregado corretamente.")
+        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Erro ao carregar Posts.csv: {e}")
+        st.error(f"Erro ao carregar Posts(1).csv: {e}")
         return pd.DataFrame()
 
 # Função para criar gráfico de barras com Altair
@@ -53,12 +61,12 @@ def main():
 
     st.title("📊 Análise de Deputados e Engajamento + Posts nas Redes Sociais")
 
-    # Carregar os dados
+    # Carregar os dados dos deputados
     with st.spinner("Carregando dados dos deputados..."):
         df = load_data()
 
     if df.empty:
-        st.warning("Não foi possível carregar os dados dos deputados.")
+        st.warning("Não foi possível carregar os dados dos deputados. Verifique se os arquivos `deputados.csv` e `engajamento_redes.csv` estão presentes ou se os mocks foram gerados corretamente.")
         return
 
     # --- Filtros dos Deputados ---
@@ -108,16 +116,22 @@ def main():
         top_x = filtered_df.nlargest(num_top_deputies, 'seguidores_twitter')
         if not top_x.empty:
             st.altair_chart(create_bar_chart(top_x, 'seguidores_twitter', 'nome_deputado', f"Top {num_top_deputies} por Seguidores no X"), use_container_width=True)
+        else:
+            st.info("Dados insuficientes para este gráfico.")
     with col2:
         st.write(f"### Top {num_top_deputies} por Curtidas no Instagram")
         top_instagram = filtered_df.nlargest(num_top_deputies, 'curtidas_instagram')
         if not top_instagram.empty:
             st.altair_chart(create_bar_chart(top_instagram, 'curtidas_instagram', 'nome_deputado', f"Top {num_top_deputies} por Curtidas no Instagram"), use_container_width=True)
+        else:
+            st.info("Dados insuficientes para este gráfico.")
     with col3:
         st.write(f"### Top {num_top_deputies} por Visualizações no TikTok")
         top_tiktok = filtered_df.nlargest(num_top_deputies, 'visualizacoes_tiktok')
         if not top_tiktok.empty:
             st.altair_chart(create_bar_chart(top_tiktok, 'visualizacoes_tiktok', 'nome_deputado', f"Top {num_top_deputies} por Visualizações no TikTok"), use_container_width=True)
+        else:
+            st.info("Dados insuficientes para este gráfico.")
 
     st.markdown("---")
 
@@ -126,14 +140,22 @@ def main():
 
     df_posts = load_posts()
     if df_posts.empty:
-        st.warning("Nenhum dado de posts encontrado.")
+        st.warning("Nenhum dado de posts encontrado. Verifique se o arquivo `Posts(1).csv` está presente.")
     else:
-        redes = ["Todas"] + sorted(df_posts['Top 5 values of Network.keyword'].dropna().unique().tolist())
+        # Ensure the column name matches what's in Posts(1).csv if it differs
+        # Based on the user's initial code, it's 'Top 5 values of Network.keyword'
+        network_col = 'Top 5 values of Network.keyword'
+        if network_col not in df_posts.columns:
+            st.warning(f"Coluna '{network_col}' não encontrada em Posts(1).csv. Verifique o nome da coluna de rede social.")
+            redes = ["Todas"] # Fallback if column not found
+        else:
+            redes = ["Todas"] + sorted(df_posts[network_col].dropna().unique().tolist())
+
         selected_rede = st.selectbox("Filtrar por Rede Social:", redes)
 
         filtered_posts = df_posts.copy()
         if selected_rede != "Todas":
-            filtered_posts = filtered_posts[filtered_posts['Top 5 values of Network.keyword'] == selected_rede]
+            filtered_posts = filtered_posts[filtered_posts[network_col] == selected_rede]
 
         top_n = st.slider("Número de Posts no gráfico (Top N):", 5, 30, 10)
         top_posts = filtered_posts.nlargest(top_n, 'Engajamento total')
@@ -142,11 +164,11 @@ def main():
             chart = alt.Chart(top_posts).mark_bar().encode(
                 x=alt.X('Engajamento total', title='Engajamento Total'),
                 y=alt.Y('Parlamentar', sort='-x', title='Parlamentar'),
-                color=alt.Color('Top 5 values of Network.keyword', title='Rede Social'),
+                color=alt.Color(network_col, title='Rede Social'),
                 tooltip=[
                     alt.Tooltip('Parlamentar'),
                     alt.Tooltip('Engajamento total', format=','),
-                    alt.Tooltip('Top 5 values of Network.keyword', title='Rede'),
+                    alt.Tooltip(network_col, title='Rede'),
                     alt.Tooltip('Top 50 posts', title='Link do Post'),
                     alt.Tooltip('Message', title='Mensagem')
                 ]
@@ -157,7 +179,11 @@ def main():
             st.altair_chart(chart, use_container_width=True)
 
             st.write("### Tabela dos Posts no Gráfico")
-            st.dataframe(top_posts[['Date', 'Parlamentar', 'Top 5 values of Network.keyword', 'Engajamento total', 'Top 50 posts', 'Message']])
+            # Ensure these columns exist in df_posts
+            display_cols_posts = ['Date', 'Parlamentar', network_col, 'Engajamento total', 'Top 50 posts', 'Message']
+            # Filter for columns that actually exist
+            existing_display_cols = [col for col in display_cols_posts if col in top_posts.columns]
+            st.dataframe(top_posts[existing_display_cols])
         else:
             st.info("Nenhum post encontrado com os filtros aplicados.")
 
