@@ -1,0 +1,157 @@
+import streamlit as st
+import pandas as pd
+import altair as alt # Importa Altair para gráficos mais interativos
+
+# Função para carregar e combinar os dados
+@st.cache_data # Cache os dados para evitar recarregamento a cada interação
+def load_data():
+    """
+    Carrega os dados dos deputados e de engajamento de redes sociais,
+    e os combina em um único DataFrame.
+    """
+    try:
+        # Carrega os dados dos deputados
+        df_deputados = pd.read_csv('deputados.csv')
+        
+        # Carrega os dados de engajamento das redes sociais
+        df_engajamento = pd.read_csv('engajamento_redes.csv')
+        
+        # Junta os DataFrames usando o 'nome_deputado' como chave.
+        # 'how='left'' garante que todos os deputados sejam mantidos,
+        # mesmo que não tenham dados de engajamento.
+        df_completo = pd.merge(df_deputados, df_engajamento, on='nome_deputado', how='left')
+        
+        # Preenche valores ausentes (NaN) nas colunas de engajamento com 0.
+        # Isso é útil se algum deputado não tiver dados de redes sociais no arquivo.
+        engagement_cols = ['seguidores_x', 'curtidas_instagram', 'visualizacoes_tiktok']
+        for col in engagement_cols:
+            if col not in df_completo.columns:
+                df_completo[col] = 0 # Adiciona a coluna se não existir e preenche com 0
+            df_completo[col] = df_completo[col].fillna(0).astype(int)
+            
+        return df_completo
+    except FileNotFoundError:
+        st.error("Erro: Um ou ambos os arquivos 'deputados.csv' e 'engajamento_redes.csv' não foram encontrados.")
+        st.info("Por favor, certifique-se de que os arquivos CSV estão no mesmo diretório do script.")
+        return pd.DataFrame() # Retorna um DataFrame vazio em caso de erro
+
+# Função principal do aplicativo Streamlit
+def main():
+    # Configuração da página
+    st.set_page_config(
+        page_title="Análise de Deputados e Engajamento",
+        layout="wide", # Usa a largura total da tela
+        initial_sidebar_state="expanded" # Mantém a barra lateral expandida por padrão
+    )
+
+    st.title("📊 Análise de Deputados e Engajamento em Redes Sociais")
+    st.markdown("""
+        Este aplicativo permite explorar dados de deputados federais e seu engajamento nas plataformas X (Twitter), Instagram e TikTok.
+        Use os filtros na barra lateral para refinar sua busca.
+    """)
+
+    df = load_data()
+
+    if df.empty:
+        st.warning("Não foi possível carregar os dados. Por favor, verifique os arquivos CSV.")
+        return
+
+    # --- Barra Lateral para Filtros ---
+    st.sidebar.header("Filtros de Dados")
+
+    # Filtro por UF
+    # Adiciona "Todas" como uma opção para selecionar todas as UFs
+    ufs = ["Todas"] + sorted(df['uf'].unique().tolist())
+    selected_uf = st.sidebar.selectbox("Filtrar por UF:", ufs)
+
+    # Filtro por Partido
+    # Adiciona "Todos" como uma opção para selecionar todos os partidos
+    partidos = ["Todos"] + sorted(df['partido'].unique().tolist())
+    selected_partido = st.sidebar.selectbox("Filtrar por Partido:", partidos)
+
+    # Filtro por nome do deputado (pesquisa textual, insensível a maiúsculas/minúsculas)
+    search_name = st.sidebar.text_input("Pesquisar por Nome do Deputado:")
+
+    # --- Aplica os filtros ---
+    filtered_df = df.copy()
+
+    if selected_uf != "Todas":
+        filtered_df = filtered_df[filtered_df['uf'] == selected_uf]
+
+    if selected_partido != "Todos":
+        filtered_df = filtered_df[filtered_df['partido'] == selected_partido]
+
+    if search_name:
+        # Usa .str.contains para buscar o nome em qualquer parte da string
+        # case=False ignora maiúsculas/minúsculas, na=False trata NaNs como não correspondentes
+        filtered_df = filtered_df[filtered_df['nome_deputado'].str.contains(search_name, case=False, na=False)]
+    
+    # --- Exibição dos Dados Tabulares ---
+    st.subheader(f"Lista de Deputados ({len(filtered_df)} encontrados)")
+
+    if not filtered_df.empty:
+        # Reordena e formata as colunas para melhor visualização na tabela
+        cols_to_display = ['nome_deputado', 'partido', 'uf', 'seguidores_x', 'curtidas_instagram', 'visualizacoes_tiktok']
+        
+        # Formata os números de engajamento para serem mais legíveis
+        st.dataframe(
+            filtered_df[cols_to_display].style
+            .format({
+                'seguidores_x': "{:,.0f}",
+                'curtidas_instagram': "{:,.0f}",
+                'visualizacoes_tiktok': "{:,.0f}"
+            })
+            .highlight_max(subset=['seguidores_x', 'curtidas_instagram', 'visualizacoes_tiktok'], axis=0, color='#d3f9d8') # Cor verde claro para destacar o máximo
+            .set_properties(**{'text-align': 'left'}) # Alinha o texto à esquerda
+        )
+    else:
+        st.info("Nenhum deputado encontrado com os filtros selecionados.")
+
+    # --- Visualizações de Engajamento ---
+    if not filtered_df.empty:
+        st.subheader("Visualizações de Engajamento por Plataforma")
+
+        # Define um número de deputados para exibir nos gráficos de "Top N"
+        num_top_deputies = st.slider("Número de deputados para exibir nos gráficos de Top N:", 5, 20, 10)
+
+        # Função para criar um gráfico de barras usando Altair
+        def create_bar_chart(data, x_col, y_col, title):
+            chart = alt.Chart(data).mark_bar().encode(
+                x=alt.X(x_col, title=title.split("por ")[1]), # Título do eixo x
+                y=alt.Y(y_col, title="Nome do Deputado", sort='-x'), # Título do eixo y e ordenação
+                tooltip=[y_col, x_col] # Exibe o nome e o valor ao passar o mouse
+            ).properties(
+                title=title
+            ).interactive() # Permite zoom e pan
+            return chart
+
+        # Top N Deputados por Seguidores no X
+        st.write(f"### Top {num_top_deputies} Deputados por Seguidores no X")
+        top_x = filtered_df.nlargest(num_top_deputies, 'seguidores_x')
+        if not top_x.empty:
+            chart_x = create_bar_chart(top_x, 'seguidores_x', 'nome_deputado', f"Top {num_top_deputies} Deputados por Seguidores no X")
+            st.altair_chart(chart_x, use_container_width=True)
+        else:
+            st.info("Nenhum dado para exibir para o Top de Seguidores no X.")
+
+        # Top N Deputados por Curtidas no Instagram
+        st.write(f"### Top {num_top_deputies} Deputados por Curtidas no Instagram")
+        top_instagram = filtered_df.nlargest(num_top_deputies, 'curtidas_instagram')
+        if not top_instagram.empty:
+            chart_instagram = create_bar_chart(top_instagram, 'curtidas_instagram', 'nome_deputado', f"Top {num_top_deputies} Deputados por Curtidas no Instagram")
+            st.altair_chart(chart_instagram, use_container_width=True)
+        else:
+            st.info("Nenhum dado para exibir para o Top de Curtidas no Instagram.")
+        
+        # Top N Deputados por Visualizações no TikTok
+        st.write(f"### Top {num_top_deputies} Deputados por Visualizações no TikTok")
+        top_tiktok = filtered_df.nlargest(num_top_deputies, 'visualizacoes_tiktok')
+        if not top_tiktok.empty:
+            chart_tiktok = create_bar_chart(top_tiktok, 'visualizacoes_tiktok', 'nome_deputado', f"Top {num_top_deputies} Deputados por Visualizações no TikTok")
+            st.altair_chart(chart_tiktok, use_container_width=True)
+        else:
+            st.info("Nenhum dado para exibir para o Top de Visualizações no TikTok.")
+
+# Ponto de entrada do aplicativo
+if __name__ == '__main__':
+    main()
