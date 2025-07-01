@@ -1,82 +1,87 @@
-import streamlit as st
-import pandas as pd
 import altair as alt
+import pandas as pd
+import streamlit as st
 
+# ----------------------
 # Função para carregar dados dos deputados
-@st.cache_data
-def load_data():
+# ----------------------
+def load_data(uploaded_file=None):
     try:
-        # These files are now available due to mock data generation
-        df_deputados = pd.read_csv('deputados.csv')
-        df_engajamento = pd.read_csv('engajamento_redes.csv')
-        df_completo = pd.merge(df_deputados, df_engajamento, on='nome_deputado', how='left')
+        if uploaded_file is not None:
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_csv('engajamentodeputados.csv')
 
-        # Ajustes de colunas
-        df_completo.rename(columns={'seguidores_x': 'seguidores_twitter'}, inplace=True)
+        # Ajuste de colunas esperadas
+        for col in ['nome_deputado', 'partido', 'uf', 'seguidores_twitter', 'curtidas_instagram', 'visualizacoes_tiktok']:
+            if col not in df.columns:
+                df[col] = 0
 
-        for col in ['seguidores_twitter', 'curtidas_instagram', 'visualizacoes_tiktok']:
-            if col not in df_completo.columns:
-                df_completo[col] = 0
-            df_completo[col] = df_completo[col].fillna(0).astype(int)
+        df['seguidores_twitter'] = df['seguidores_twitter'].fillna(0).astype(int)
+        df['curtidas_instagram'] = df['curtidas_instagram'].fillna(0).astype(int)
+        df['visualizacoes_tiktok'] = df['visualizacoes_tiktok'].fillna(0).astype(int)
 
-        return df_completo
-
-    except FileNotFoundError as e:
-        st.error(f"Erro: Um dos arquivos de dados (deputados.csv ou engajamento_redes.csv) não foi encontrado. Detalhes: {e}")
-        return pd.DataFrame()
+        return df
     except Exception as e:
         st.error(f"Erro ao carregar dados dos deputados: {e}")
         return pd.DataFrame()
 
+# ----------------------
 # Função para carregar os posts
-@st.cache_data
-def load_posts():
+# ----------------------
+def load_posts(uploaded_posts=None):
     try:
-        # Changed to load Posts(1).csv directly
-        df_posts = pd.read_csv('Posts(1).csv', delimiter=';')
+        if uploaded_posts is not None:
+            df_posts = pd.read_csv(uploaded_posts, delimiter=';')
+        else:
+            df_posts = pd.read_csv('engajamentodeputados.csv', delimiter=';')
+
         df_posts['Date'] = pd.to_datetime(df_posts['Date'], errors='coerce')
         df_posts['Engajamento total'] = pd.to_numeric(df_posts['Engajamento total'], errors='coerce').fillna(0).astype(int)
         return df_posts
-    except FileNotFoundError:
-        st.error("Erro: Arquivo 'Posts(1).csv' não encontrado. Certifique-se de que o arquivo foi carregado corretamente.")
-        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Erro ao carregar Posts(1).csv: {e}")
+        st.error(f"Erro ao carregar dados dos posts: {e}")
         return pd.DataFrame()
 
-# Função para criar gráfico de barras com Altair
+# ----------------------
+# Gráfico de barras com Altair
+# ----------------------
 def create_bar_chart(data, x_col, y_col, title):
-    x_axis_title = title.split("por ")[1] if "por " in title else x_col
     return alt.Chart(data).mark_bar().encode(
-        x=alt.X(x_col, title=x_axis_title),
-        y=alt.Y(y_col, sort='-x', title='Nome do Deputado'),
-        tooltip=[y_col, x_col, 'partido', 'uf']
-    ).properties(
-        title=title
-    ).interactive()
+        x=alt.X(x_col, title=title.split("por ")[1] if "por " in title else x_col),
+        y=alt.Y(y_col, sort='-x'),
+        tooltip=[y_col, x_col]
+    ).properties(title=title).interactive()
 
-# Função principal
+# ----------------------
+# Função principal do app
+# ----------------------
 def main():
-    st.set_page_config(page_title="Análise de Deputados e Posts", layout="wide")
+    st.set_page_config(page_title="📊 Análise de Deputados e Engajamento", layout="wide")
+    st.title("📊 Análise de Deputados e Engajamento + Posts")
 
-    st.title("📊 Análise de Deputados e Engajamento + Posts nas Redes Sociais")
+    # Uploads
+    st.sidebar.header("🔽 Upload de Arquivos (opcional)")
+    uploaded_file = st.sidebar.file_uploader("📂 CSV de Deputados", type="csv")
+    uploaded_posts = st.sidebar.file_uploader("📂 CSV de Posts", type="csv")
 
-    # Carregar os dados dos deputados
-    with st.spinner("Carregando dados dos deputados..."):
-        df = load_data()
+    # Carregar dados
+    with st.spinner("Carregando dados..."):
+        df = load_data(uploaded_file)
+        df_posts = load_posts(uploaded_posts)
 
     if df.empty:
-        st.warning("Não foi possível carregar os dados dos deputados. Verifique se os arquivos `deputados.csv` e `engajamento_redes.csv` estão presentes ou se os mocks foram gerados corretamente.")
+        st.warning("Nenhum dado de deputado carregado.")
         return
 
-    # --- Filtros dos Deputados ---
-    st.sidebar.header("Filtros de Deputados")
+    # Filtros
+    st.sidebar.header("📋 Filtros")
     ufs = ["Todas"] + sorted(df['uf'].dropna().unique().tolist())
     partidos = ["Todos"] + sorted(df['partido'].dropna().unique().tolist())
 
-    selected_uf = st.sidebar.selectbox("Filtrar por UF:", ufs)
-    selected_partido = st.sidebar.selectbox("Filtrar por Partido:", partidos)
-    search_name = st.sidebar.text_input("Pesquisar por Nome do Deputado:")
+    selected_uf = st.sidebar.selectbox("UF:", ufs)
+    selected_partido = st.sidebar.selectbox("Partido:", partidos)
+    search_name = st.sidebar.text_input("🔍 Nome do Deputado:")
 
     filtered_df = df.copy()
     if selected_uf != "Todas":
@@ -86,107 +91,78 @@ def main():
     if search_name:
         filtered_df = filtered_df[filtered_df['nome_deputado'].str.contains(search_name, case=False, na=False)]
 
-    # --- Tabela de Deputados ---
-    st.subheader(f"Lista de Deputados ({len(filtered_df)} encontrados)")
+    # Tabela Deputados
+    st.subheader(f"📋 Lista de Deputados ({len(filtered_df)} encontrados)")
     if not filtered_df.empty:
-        cols_to_display = ['nome_deputado', 'partido', 'uf', 'seguidores_twitter', 'curtidas_instagram', 'visualizacoes_tiktok']
+        cols = ['nome_deputado', 'partido', 'uf', 'seguidores_twitter', 'curtidas_instagram', 'visualizacoes_tiktok']
         st.dataframe(
-            filtered_df[cols_to_display].style
-            .format({
+            filtered_df[cols].style.format({
                 'seguidores_twitter': '{:,.0f}',
                 'curtidas_instagram': '{:,.0f}',
                 'visualizacoes_tiktok': '{:,.0f}'
-            })
-            .highlight_max(subset=['seguidores_twitter', 'curtidas_instagram', 'visualizacoes_tiktok'], color='#d3f9d8')
+            }).highlight_max(subset=cols[3:], color='#d3f9d8')
         )
 
-        # Download CSV
         csv = filtered_df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Baixar dados filtrados", data=csv, file_name="dados_deputados_filtrados.csv", mime="text/csv")
+        st.download_button("📥 Baixar dados filtrados", data=csv, file_name="deputados_filtrados.csv", mime="text/csv")
     else:
-        st.info("Nenhum deputado encontrado com os filtros selecionados.")
+        st.info("Nenhum resultado com os filtros aplicados.")
 
-    # --- Gráficos de Engajamento dos Deputados ---
-    st.subheader("Visualizações de Engajamento por Plataforma")
-    num_top_deputies = st.slider("Número de deputados para exibir nos gráficos de Top N:", 5, 20, 10)
+    # Gráficos Engajamento
+    st.subheader("📈 Visualização de Engajamento por Plataforma")
+    top_n = st.slider("Top N Deputados:", 5, 20, 10)
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.write(f"### Top {num_top_deputies} por Seguidores no X")
-        top_x = filtered_df.nlargest(num_top_deputies, 'seguidores_twitter')
-        if not top_x.empty:
-            st.altair_chart(create_bar_chart(top_x, 'seguidores_twitter', 'nome_deputado', f"Top {num_top_deputies} por Seguidores no X"), use_container_width=True)
-        else:
-            st.info("Dados insuficientes para este gráfico.")
+        st.write("### Twitter")
+        top = filtered_df.nlargest(top_n, 'seguidores_twitter')
+        if not top.empty:
+            st.altair_chart(create_bar_chart(top, 'seguidores_twitter', 'nome_deputado', f"Top {top_n} por Seguidores no Twitter"), use_container_width=True)
     with col2:
-        st.write(f"### Top {num_top_deputies} por Curtidas no Instagram")
-        top_instagram = filtered_df.nlargest(num_top_deputies, 'curtidas_instagram')
-        if not top_instagram.empty:
-            st.altair_chart(create_bar_chart(top_instagram, 'curtidas_instagram', 'nome_deputado', f"Top {num_top_deputies} por Curtidas no Instagram"), use_container_width=True)
-        else:
-            st.info("Dados insuficientes para este gráfico.")
+        st.write("### Instagram")
+        top = filtered_df.nlargest(top_n, 'curtidas_instagram')
+        if not top.empty:
+            st.altair_chart(create_bar_chart(top, 'curtidas_instagram', 'nome_deputado', f"Top {top_n} por Curtidas no Instagram"), use_container_width=True)
     with col3:
-        st.write(f"### Top {num_top_deputies} por Visualizações no TikTok")
-        top_tiktok = filtered_df.nlargest(num_top_deputies, 'visualizacoes_tiktok')
-        if not top_tiktok.empty:
-            st.altair_chart(create_bar_chart(top_tiktok, 'visualizacoes_tiktok', 'nome_deputado', f"Top {num_top_deputies} por Visualizações no TikTok"), use_container_width=True)
-        else:
-            st.info("Dados insuficientes para este gráfico.")
+        st.write("### TikTok")
+        top = filtered_df.nlargest(top_n, 'visualizacoes_tiktok')
+        if not top.empty:
+            st.altair_chart(create_bar_chart(top, 'visualizacoes_tiktok', 'nome_deputado', f"Top {top_n} por Visualizações no TikTok"), use_container_width=True)
 
-    st.markdown("---")
+    # Análise de Posts
+    if not df_posts.empty:
+        st.markdown("---")
+        st.header("📱 Top N Posts por Engajamento")
 
-    # --- Análise de Posts: Top N por Engajamento ---
-    st.header("📱 Top N Posts por Engajamento")
+        redes = ["Todas"] + sorted(df_posts['Top 5 values of Network.keyword'].dropna().unique().tolist())
+        rede_sel = st.selectbox("Filtrar por Rede Social:", redes)
 
-    df_posts = load_posts()
-    if df_posts.empty:
-        st.warning("Nenhum dado de posts encontrado. Verifique se o arquivo `Posts(1).csv` está presente.")
-    else:
-        # Ensure the column name matches what's in Posts(1).csv if it differs
-        # Based on the user's initial code, it's 'Top 5 values of Network.keyword'
-        network_col = 'Top 5 values of Network.keyword'
-        if network_col not in df_posts.columns:
-            st.warning(f"Coluna '{network_col}' não encontrada em Posts(1).csv. Verifique o nome da coluna de rede social.")
-            redes = ["Todas"] # Fallback if column not found
-        else:
-            redes = ["Todas"] + sorted(df_posts[network_col].dropna().unique().tolist())
+        posts_filtrados = df_posts.copy()
+        if rede_sel != "Todas":
+            posts_filtrados = posts_filtrados[posts_filtrados['Top 5 values of Network.keyword'] == rede_sel]
 
-        selected_rede = st.selectbox("Filtrar por Rede Social:", redes)
-
-        filtered_posts = df_posts.copy()
-        if selected_rede != "Todas":
-            filtered_posts = filtered_posts[filtered_posts[network_col] == selected_rede]
-
-        top_n = st.slider("Número de Posts no gráfico (Top N):", 5, 30, 10)
-        top_posts = filtered_posts.nlargest(top_n, 'Engajamento total')
+        top_post_n = st.slider("Número de Posts no Gráfico:", 5, 30, 10)
+        top_posts = posts_filtrados.nlargest(top_post_n, 'Engajamento total')
 
         if not top_posts.empty:
             chart = alt.Chart(top_posts).mark_bar().encode(
                 x=alt.X('Engajamento total', title='Engajamento Total'),
-                y=alt.Y('Parlamentar', sort='-x', title='Parlamentar'),
-                color=alt.Color(network_col, title='Rede Social'),
+                y=alt.Y('Parlamentar', sort='-x'),
+                color='Top 5 values of Network.keyword',
                 tooltip=[
-                    alt.Tooltip('Parlamentar'),
-                    alt.Tooltip('Engajamento total', format=','),
-                    alt.Tooltip(network_col, title='Rede'),
-                    alt.Tooltip('Top 50 posts', title='Link do Post'),
-                    alt.Tooltip('Message', title='Mensagem')
+                    'Parlamentar',
+                    'Engajamento total',
+                    'Top 5 values of Network.keyword',
+                    'Top 50 posts',
+                    'Message'
                 ]
-            ).properties(
-                title=f"Top {top_n} Posts por Engajamento"
-            ).interactive()
+            ).properties(title=f"Top {top_post_n} Posts por Engajamento").interactive()
 
             st.altair_chart(chart, use_container_width=True)
-
-            st.write("### Tabela dos Posts no Gráfico")
-            # Ensure these columns exist in df_posts
-            display_cols_posts = ['Date', 'Parlamentar', network_col, 'Engajamento total', 'Top 50 posts', 'Message']
-            # Filter for columns that actually exist
-            existing_display_cols = [col for col in display_cols_posts if col in top_posts.columns]
-            st.dataframe(top_posts[existing_display_cols])
+            st.dataframe(top_posts[['Date', 'Parlamentar', 'Top 5 values of Network.keyword', 'Engajamento total', 'Top 50 posts', 'Message']])
         else:
-            st.info("Nenhum post encontrado com os filtros aplicados.")
+            st.info("Nenhum post encontrado.")
 
-# Rodar o app
+# Run
 if __name__ == '__main__':
     main()
